@@ -141,7 +141,7 @@ body {
   flex: 1 1 auto;
   overflow: auto;
   position: relative;
-  font-size: 16px;
+  font-size: 12px;
   line-height: 1;
   font-family: sans-serif;
 }
