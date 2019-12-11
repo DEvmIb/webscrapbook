@@ -415,99 +415,7 @@ const scrapbookUi = {
         index = Array.prototype.indexOf.call(siblingItems, itemElem);
       }
 
-      // acquire a lock
-      await this.book.lockTree();
-
-      try {
-        // validate if we can modify the tree
-        if (!await this.book.validateTree()) {
-          throw new Error(scrapbook.lang('ScrapBookErrorServerTreeChanged'));
-        }
-
-        for (const file of detail.files) {
-          try {
-            // create new item
-            const newItem = this.book.addItem({
-              item: {
-                "title": file.name,
-                "type": "file",
-              },
-              parentId: parentItemId,
-              index,
-            });
-            newItem.index = newItem.id + '/index.html';
-
-            let filename = file.name;
-            if (filename === 'index.html') { filename = 'index-1.html'; }
-            filename = scrapbook.validateFilename(filename, scrapbook.getOption("capture.saveAsciiFilename"));
-
-            // upload file
-            {
-              const target = this.book.dataUrl + scrapbook.escapeFilename(newItem.id + '/' + filename);
-              const formData = new FormData();
-              formData.append('token', await server.acquireToken());
-              formData.append('upload', file);
-              await server.request({
-                url: target + '?a=save&f=json',
-                method: "POST",
-                body: formData,
-              });
-            }
-
-            // upload index.html
-            {
-              const title = newItem.title;
-              const url = scrapbook.escapeFilename(filename);
-              const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="refresh" content="0;url=${scrapbook.escapeHtml(url)}">
-${title ? '<title>' + scrapbook.escapeHtml(title, false) + '</title>\n' : ''}</head>
-<body>
-Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtml(filename, false)}</a>
-</body>
-</html>
-`;
-              const file = new File([html], 'index.html', {type: 'text/html'});
-              const target = this.book.dataUrl + scrapbook.escapeFilename(newItem.id + '/index.html');
-              const formData = new FormData();
-              formData.append('token', await server.acquireToken());
-              formData.append('upload', file);
-              await server.request({
-                url: target + '?a=save&f=json',
-                method: "POST",
-                body: formData,
-              });
-            }
-
-            // update DOM
-            Array.prototype.filter.call(
-              document.getElementById('items').querySelectorAll('[data-id]'),
-              x => x.getAttribute('data-id') === parentItemId
-            ).forEach((parentElem) => {
-              if (!(parentElem.parentNode)) { return; }
-              this.itemMakeContainer(parentElem);
-              if (!parentElem.container.hasAttribute('data-loaded')) { return; }
-              this.addItem(newItem.id, parentElem, index + 1);
-            });
-
-            index++;
-          } catch (ex) {
-            console.error(ex);
-            this.warn(`Unable to upload '${file.name}': ${ex.message}`);
-          }
-        }
-
-        // save meta and TOC
-        await this.book.saveTreeFiles({meta: true, toc: true, useLock: false});
-      } catch (ex) {
-        await this.book.unlockTree();
-        throw ex;
-      }
-
-      // release the lock
-      await this.book.unlockTree();
+      await this.uploadItems(detail.files, parentItemId, index);
     },
 
     async edit(selectedItemElems) {
@@ -1332,6 +1240,7 @@ Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtm
       } else {
         icon.src = {
           'folder': browser.runtime.getURL('resources/fclose.png'),
+          'file': browser.runtime.getURL('resources/file.png'),
           'note': browser.runtime.getURL('resources/note.png'),
           'postit': browser.runtime.getURL('resources/postit.png'),
         }[meta.type] || browser.runtime.getURL('resources/item.png');
@@ -1557,12 +1466,164 @@ Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtm
     await this.book.saveTreeFiles({toc: true});
   },
 
-  onItemDragStart(event) {
-    if (document.querySelector('#command option[value="move_drag"]').closest(':disabled')) {
-      event.dataTransfer.effectAllowed = 'none';
+  async uploadItems(files, targetId, targetIndex) {
+    // acquire a lock
+    await this.book.lockTree();
+
+    try {
+      // validate if we can modify the tree
+      if (!await this.book.validateTree()) {
+        throw new Error(scrapbook.lang('ScrapBookErrorServerTreeChanged'));
+      }
+
+      for (const file of files) {
+        try {
+          // create new item
+          const newItem = this.book.addItem({
+            item: {
+              "title": file.name,
+              "type": "file",
+            },
+            parentId: targetId,
+            index: targetIndex,
+          });
+          newItem.index = newItem.id + '/index.html';
+
+          let filename = file.name;
+          if (filename === 'index.html') { filename = 'index-1.html'; }
+          filename = scrapbook.validateFilename(filename, scrapbook.getOption("capture.saveAsciiFilename"));
+
+          // upload file
+          {
+            const target = this.book.dataUrl + scrapbook.escapeFilename(newItem.id + '/' + filename);
+            const formData = new FormData();
+            formData.append('token', await server.acquireToken());
+            formData.append('upload', file);
+            await server.request({
+              url: target + '?a=save&f=json',
+              method: "POST",
+              body: formData,
+            });
+          }
+
+          // upload index.html
+          {
+            const title = newItem.title;
+            const url = scrapbook.escapeFilename(filename);
+            const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="0;url=${scrapbook.escapeHtml(url)}">
+${title ? '<title>' + scrapbook.escapeHtml(title, false) + '</title>\n' : ''}</head>
+<body>
+Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtml(filename, false)}</a>
+</body>
+</html>
+`;
+            const file = new File([html], 'index.html', {type: 'text/html'});
+            const target = this.book.dataUrl + scrapbook.escapeFilename(newItem.id + '/index.html');
+            const formData = new FormData();
+            formData.append('token', await server.acquireToken());
+            formData.append('upload', file);
+            await server.request({
+              url: target + '?a=save&f=json',
+              method: "POST",
+              body: formData,
+            });
+          }
+
+          // update DOM
+          Array.prototype.filter.call(
+            document.getElementById('items').querySelectorAll('[data-id]'),
+            x => x.getAttribute('data-id') === targetId
+          ).forEach((parentElem) => {
+            if (!(parentElem.parentNode)) { return; }
+            this.itemMakeContainer(parentElem);
+            if (!parentElem.container.hasAttribute('data-loaded')) { return; }
+            this.addItem(newItem.id, parentElem, targetIndex + 1);
+          });
+
+          targetIndex++;
+        } catch (ex) {
+          console.error(ex);
+          this.warn(`Unable to upload '${file.name}': ${ex.message}`);
+        }
+      }
+
+      // save meta and TOC
+      await this.book.saveTreeFiles({meta: true, toc: true, useLock: false});
+    } catch (ex) {
+      await this.book.unlockTree();
+      throw ex;
+    }
+
+    // release the lock
+    await this.book.unlockTree();
+  },
+
+  onWindowItemDragEnter(event) {
+    this.onWindowItemDragOver(event);
+  },
+
+  onWindowItemDragOver(event) {
+    event.preventDefault();
+
+    // disallow when commands disabled
+    if (document.querySelector('#command:disabled')) {
+      event.dataTransfer.dropEffect = 'none';
       return;
     }
 
+    if (event.dataTransfer.types.includes('Files') && this.rootId !== 'recycle') {
+      event.dataTransfer.dropEffect = 'copy';
+    } else {
+      event.dataTransfer.dropEffect = 'none';
+    }
+  },
+
+  async onWindowItemDrop(event) {
+    event.preventDefault();
+
+    if (event.dataTransfer.types.includes('Files')) {
+      const targetId = this.rootId;
+      const targetIndex = Infinity;
+
+      if (!this.itemIsValidTarget(targetId)) { return; }
+
+      this.enableUi(false);
+
+      try {
+        const entries = Array.prototype.map.call(
+          event.dataTransfer.items,
+          x => x.webkitGetAsEntry && x.webkitGetAsEntry()
+        );
+
+        const files = [];
+        for (const entry of entries) {
+          if (!entry.isFile) { continue; }
+          try {
+            const file = await new Promise((resolve, reject) => {
+              entry.file(resolve, reject);
+            });
+            files.push(file);
+          } catch (ex) {}
+        }
+
+        await this.uploadItems(files, targetId, targetIndex);
+      } catch (ex) {
+        console.error(ex);
+        this.error(ex.message);
+        // when any error happens, the UI is possibility in an inconsistent status.
+        // lock the UI to avoid further manipulation and damage.
+        return;
+      }
+
+      this.enableUi(true);
+    }
+  },
+
+  onItemDragStart(event) {
     this.highlightItem(event.currentTarget.parentNode, true);
 
     const selectedItemElems = Array.prototype.map.call(
@@ -1594,7 +1655,7 @@ Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtm
   },
 
   onItemDragEnter(event) {
-    if (!this.lastDraggedElem) { return; }
+    event.stopPropagation();
 
     const wrapper = event.currentTarget;
     if (!wrapper.classList.contains('dragover')) {
@@ -1608,42 +1669,58 @@ Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtm
       }
       cur = cur.parentNode.parentNode;
     }
+
+    this.onItemDragOver(event);
   },
 
   onItemDragOver(event) {
-    if (!this.lastDraggedElem) { return; }
-
-    const wrapper = event.currentTarget;
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const pos = (event.clientY - wrapperRect.top) / wrapperRect.height;
-
-    wrapper.classList.remove('above');
-    wrapper.classList.remove('below');
-    wrapper.classList.remove('within');
-
-    if (pos < 1/3) {
-      wrapper.classList.add('above');
-    } else if (pos > 2/3) {
-      wrapper.classList.add('below');
-    } else {
-      wrapper.classList.add('within');
-    }
-
-    // determine the drop effect according to modifiers
-    if (event.ctrlKey && this.rootId !== 'recycle') {
-      event.dataTransfer.dropEffect = 'link';
-      document.getElementById('items').classList.remove('moving');
-    } else {
-      event.dataTransfer.dropEffect = 'move';
-      document.getElementById('items').classList.add('moving');
-    }
-
-    // prevent default to allow drop
+    event.stopPropagation();
     event.preventDefault();
+
+    // disallow when commands disabled
+    if (document.querySelector('#command:disabled')) {
+      event.dataTransfer.dropEffect = 'none';
+      return;
+    }
+
+    if (this.lastDraggedElem ||
+        (event.dataTransfer.types.includes('Files') && this.rootId !== 'recycle')) {
+
+      const wrapper = event.currentTarget;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const pos = (event.clientY - wrapperRect.top) / wrapperRect.height;
+
+      wrapper.classList.remove('above');
+      wrapper.classList.remove('below');
+      wrapper.classList.remove('within');
+
+      if (pos < 1/3) {
+        wrapper.classList.add('above');
+      } else if (pos > 2/3) {
+        wrapper.classList.add('below');
+      } else {
+        wrapper.classList.add('within');
+      }
+
+      if (this.lastDraggedElem) {
+        // determine the drop effect according to modifiers
+        if (event.ctrlKey && this.rootId !== 'recycle') {
+          event.dataTransfer.dropEffect = 'link';
+          document.getElementById('items').classList.remove('moving');
+        } else {
+          event.dataTransfer.dropEffect = 'move';
+          document.getElementById('items').classList.add('moving');
+        }
+      } else if (event.dataTransfer.types.includes('Files')) {
+        event.dataTransfer.dropEffect = 'copy';
+      }
+    } else {
+      event.dataTransfer.dropEffect = 'none';
+    }
   },
 
   onItemDragLeave(event) {
-    if (!this.lastDraggedElem) { return; }
+    event.stopPropagation();
 
     const wrapper = event.currentTarget;
     let enteredElem = event.relatedTarget;
@@ -1668,76 +1745,138 @@ Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtm
   },
 
   async onItemDrop(event) {
-    if (!this.lastDraggedElem) { return; }
-
-    // prevent default navigation effect
+    event.stopPropagation();
     event.preventDefault();
 
-    const wrapper = event.currentTarget;
-    wrapper.classList.remove('dragover');
-    wrapper.classList.remove('above');
-    wrapper.classList.remove('below');
-    wrapper.classList.remove('within');
+    if (this.lastDraggedElem || event.dataTransfer.types.includes('Files')) {
+      const wrapper = event.currentTarget;
+      wrapper.classList.remove('dragover');
+      wrapper.classList.remove('above');
+      wrapper.classList.remove('below');
+      wrapper.classList.remove('within');
 
-    let cur = wrapper.parentNode;
-    while (cur && cur.closest('#items')) {
-      cur.classList.remove('dragover-within');
-      cur = cur.parentNode.parentNode;
-    }
+      let cur = wrapper.parentNode;
+      while (cur && cur.closest('#items')) {
+        cur.classList.remove('dragover-within');
+        cur = cur.parentNode.parentNode;
+      }
 
-    const selectedItemElems = Array.prototype.map.call(
-      document.querySelectorAll('#item-root .highlight'),
-      x => x.parentNode
-    );
-    if (!selectedItemElems.length) { return; }
+      if (this.lastDraggedElem) {
+        const selectedItemElems = Array.prototype.map.call(
+          document.querySelectorAll('#item-root .highlight'),
+          x => x.parentNode
+        );
+        if (!selectedItemElems.length) { return; }
 
-    let targetId;
-    let targetIndex;
-    {
-      const wrapperRect = wrapper.getBoundingClientRect();
-      const pos = (event.clientY - wrapperRect.top) / wrapperRect.height;
-      const itemElem = wrapper.parentNode;
+        let targetId;
+        let targetIndex;
+        {
+          const wrapperRect = wrapper.getBoundingClientRect();
+          const pos = (event.clientY - wrapperRect.top) / wrapperRect.height;
+          const itemElem = wrapper.parentNode;
 
-      if (pos < 1/3) {
-        // above
-        const parentItemElem = itemElem.parentNode.parentNode;
-        const siblingItems = parentItemElem.container.children;
-        const index = Array.prototype.indexOf.call(siblingItems, itemElem);
-        targetId = parentItemElem.getAttribute('data-id');
-        targetIndex = index;
-      } else if (pos > 2/3) {
-        // below
-        const parentItemElem = itemElem.parentNode.parentNode;
-        const siblingItems = parentItemElem.container.children;
-        const index = Array.prototype.indexOf.call(siblingItems, itemElem);
-        targetId = parentItemElem.getAttribute('data-id');
-        targetIndex = index + 1;
-      } else {
-        // within
-        targetId = itemElem.getAttribute('data-id');
-        targetIndex = Infinity;
+          if (pos < 1/3) {
+            // above
+            const parentItemElem = itemElem.parentNode.parentNode;
+            const siblingItems = parentItemElem.container.children;
+            const index = Array.prototype.indexOf.call(siblingItems, itemElem);
+            targetId = parentItemElem.getAttribute('data-id');
+            targetIndex = index;
+          } else if (pos > 2/3) {
+            // below
+            const parentItemElem = itemElem.parentNode.parentNode;
+            const siblingItems = parentItemElem.container.children;
+            const index = Array.prototype.indexOf.call(siblingItems, itemElem);
+            targetId = parentItemElem.getAttribute('data-id');
+            targetIndex = index + 1;
+          } else {
+            // within
+            targetId = itemElem.getAttribute('data-id');
+            targetIndex = Infinity;
+          }
+        }
+
+        if (!this.itemIsValidTarget(targetId)) { return; }
+
+        this.enableUi(false);
+
+        try {
+          if (event.ctrlKey && this.rootId !== 'recycle') {
+            await this.linkItems(selectedItemElems, targetId, targetIndex);
+          } else {
+            await this.moveItems(selectedItemElems, targetId, targetIndex);
+          }
+        } catch (ex) {
+          console.error(ex);
+          this.error(ex.message);
+          // when any error happens, the UI is possibility in an inconsistent status.
+          // lock the UI to avoid further manipulation and damage.
+          return;
+        }
+
+        this.enableUi(true);
+      } else if (event.dataTransfer.types.includes('Files')) {
+        let targetId;
+        let targetIndex;
+        {
+          const wrapperRect = wrapper.getBoundingClientRect();
+          const pos = (event.clientY - wrapperRect.top) / wrapperRect.height;
+          const itemElem = wrapper.parentNode;
+
+          if (pos < 1/3) {
+            // above
+            const parentItemElem = itemElem.parentNode.parentNode;
+            const siblingItems = parentItemElem.container.children;
+            const index = Array.prototype.indexOf.call(siblingItems, itemElem);
+            targetId = parentItemElem.getAttribute('data-id');
+            targetIndex = index - 1;
+          } else if (pos > 2/3) {
+            // below
+            const parentItemElem = itemElem.parentNode.parentNode;
+            const siblingItems = parentItemElem.container.children;
+            const index = Array.prototype.indexOf.call(siblingItems, itemElem);
+            targetId = parentItemElem.getAttribute('data-id');
+            targetIndex = index;
+          } else {
+            // within
+            targetId = itemElem.getAttribute('data-id');
+            targetIndex = Infinity;
+          }
+        }
+
+        if (!this.itemIsValidTarget(targetId)) { return; }
+
+        this.enableUi(false);
+
+        try {
+          const entries = Array.prototype.map.call(
+            event.dataTransfer.items,
+            x => x.webkitGetAsEntry && x.webkitGetAsEntry()
+          );
+
+          const files = [];
+          for (const entry of entries) {
+            if (!entry.isFile) { continue; }
+            try {
+              const file = await new Promise((resolve, reject) => {
+                entry.file(resolve, reject);
+              });
+              files.push(file);
+            } catch (ex) {}
+          }
+
+          await this.uploadItems(files, targetId, targetIndex);
+        } catch (ex) {
+          console.error(ex);
+          this.error(ex.message);
+          // when any error happens, the UI is possibility in an inconsistent status.
+          // lock the UI to avoid further manipulation and damage.
+          return;
+        }
+
+        this.enableUi(true);
       }
     }
-
-    if (!this.itemIsValidTarget(targetId)) { return; }
-
-    this.enableUi(false);
-
-    try {
-      if (event.ctrlKey && this.rootId !== 'recycle') {
-        await this.linkItems(selectedItemElems, targetId, targetIndex);
-      } else {
-        await this.moveItems(selectedItemElems, targetId, targetIndex);
-      }
-    } catch (ex) {
-      console.error(ex);
-      this.error(ex.message);
-      // when any error happens, the UI is possibility in an inconsistent status.
-      // lock the UI to avoid further manipulation and damage.
-      return;
-    }
-
-    this.enableUi(true);
   },
 
   onClickItem(event) {
@@ -1976,6 +2115,17 @@ Redirecting to file <a href="${scrapbook.escapeHtml(url)}">${scrapbook.escapeHtm
 
     await this.saveViewStatus();
   },
+
+  onClickFileSelector(event) {
+    event.preventDefault();
+    const evt = new CustomEvent("command", {
+      detail: {
+        cmd: 'upload',
+        files: event.target.files,
+      },
+    });
+    window.dispatchEvent(evt);
+  },
 };
 
 scrapbook.addMessageListener((message, sender) => {
@@ -1986,6 +2136,10 @@ scrapbook.addMessageListener((message, sender) => {
 document.addEventListener('DOMContentLoaded', async () => {
   scrapbook.loadLanguages(document);
 
+  window.addEventListener('dragenter', scrapbookUi.onWindowItemDragEnter.bind(scrapbookUi));
+  window.addEventListener('dragover', scrapbookUi.onWindowItemDragOver.bind(scrapbookUi));
+  window.addEventListener('drop', scrapbookUi.onWindowItemDrop.bind(scrapbookUi));
+
   document.getElementById("book").addEventListener('change', scrapbookUi.onBookChange.bind(scrapbookUi));
 
   document.getElementById("command").addEventListener('focus', scrapbookUi.onCommandFocus.bind(scrapbookUi));
@@ -1993,16 +2147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById("command").addEventListener('change', scrapbookUi.onCommandChange.bind(scrapbookUi));
 
   // file selector
-  document.getElementById('upload-file-selector').addEventListener('change', (event) => {
-    event.preventDefault();
-    const evt = new CustomEvent("command", {
-      detail: {
-        cmd: 'upload',
-        files: event.target.files,
-      },
-    });
-    window.dispatchEvent(evt);
-  });
+  document.getElementById('upload-file-selector').addEventListener('change', scrapbookUi.onClickFileSelector.bind(scrapbookUi));
 
   // command handler
   window.addEventListener('command', scrapbookUi.onCommandRun.bind(scrapbookUi));
